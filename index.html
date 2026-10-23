@@ -1,0 +1,623 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Ninja Shadow Run</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: #080c18;
+  color: white;
+  font-family: Arial, sans-serif;
+  overflow: hidden;
+  touch-action: none;
+}
+#game {
+  display: block;
+  width: 100vw;
+  height: 100dvh;
+  background: #101a31;
+}
+#hud {
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  right: 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+.panel {
+  background: #10192bdc;
+  border: 1px solid #4a6685;
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 14px;
+  font-weight: bold;
+}
+#health { color: #ff5f76; }
+#actions {
+  position: fixed;
+  top: 75px;
+  right: 14px;
+  display: flex;
+  gap: 8px;
+}
+button {
+  color: white;
+  background: #172944;
+  border: 1px solid #6684a9;
+  border-radius: 12px;
+  padding: 11px 14px;
+  font-size: 14px;
+  font-weight: bold;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+button:active { transform: scale(.94); background: #28517c; }
+#overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #050914a8;
+  padding: 20px;
+}
+#card {
+  width: min(420px, 100%);
+  text-align: center;
+  padding: 30px 24px;
+  background: #111c31f5;
+  border: 1px solid #526b90;
+  border-radius: 24px;
+  box-shadow: 0 0 65px #00d9ff20;
+}
+h1 {
+  font-size: clamp(32px, 8vw, 48px);
+  margin: 0 0 10px;
+  color: #70efff;
+  text-shadow: 0 0 25px #00bfff60;
+}
+#subtitle { color: #bac9dd; line-height: 1.6; }
+#mainButton {
+  background: #00bcd4;
+  color: #06121e;
+  border: 0;
+  font-size: 17px;
+  padding: 14px 28px;
+  margin-top: 15px;
+}
+#touchControls {
+  position: fixed;
+  bottom: max(22px, env(safe-area-inset-bottom));
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-between;
+  padding: 0 20px;
+  pointer-events: none;
+}
+.touchBtn {
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  font-size: 25px;
+  background: #102643b8;
+  border: 2px solid #82d9ff;
+  pointer-events: auto;
+  user-select: none;
+  -webkit-user-select: none;
+}
+#hint {
+  position: fixed;
+  bottom: 14px;
+  width: 100%;
+  text-align: center;
+  font-size: 12px;
+  color: #c2d3e5;
+  pointer-events: none;
+}
+@media (pointer:fine) {
+  #touchControls { opacity: .35; }
+}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="hud">
+  <div class="panel">🥷 SHADOW RUN</div>
+  <div class="panel">🪙 <span id="score">0</span></div>
+  <div class="panel" id="health">♥ ♥ ♥</div>
+</div>
+
+<div id="actions">
+  <button id="pauseButton">Ⅱ Pause</button>
+  <button id="restartButton">↻</button>
+</div>
+
+<div id="touchControls">
+  <button class="touchBtn" id="leftBtn" aria-label="Move left">◀</button>
+  <button class="touchBtn" id="jumpBtn" aria-label="Jump">⬆</button>
+  <button class="touchBtn" id="rightBtn" aria-label="Move right">▶</button>
+</div>
+<div id="hint">PC: Arrow keys / WASD + Space to jump</div>
+
+<div id="overlay">
+  <div id="card">
+    <div style="font-size:54px">🥷</div>
+    <h1 id="title">NINJA<br>SHADOW RUN</h1>
+    <p id="subtitle">
+      Enter the shadow world.<br>
+      Dodge enemies, collect coins,<br>
+      and survive as long as you can!
+    </p>
+    <p style="color:#7fdcf5;font-size:13px">
+      PC: A/D or ←/→ to move · Space to jump<br>
+      Android: Use the on-screen buttons
+    </p>
+    <button id="mainButton">▶ START GAME</button>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const scoreEl = document.getElementById("score");
+const healthEl = document.getElementById("health");
+const overlay = document.getElementById("overlay");
+const titleEl = document.getElementById("title");
+const subtitleEl = document.getElementById("subtitle");
+const mainButton = document.getElementById("mainButton");
+const pauseButton = document.getElementById("pauseButton");
+
+let W, H, ground, lastTime = 0;
+let running = false, paused = false, gameOver = false;
+let score = 0, health = 3, distance = 0;
+let obstacles = [], coins = [], particles = [];
+let spawnTimer = 0, coinTimer = 0, shake = 0;
+const keys = {};
+const player = {
+  x: 100, y: 0, w: 35, h: 48,
+  vx: 0, vy: 0, speed: 280,
+  onGround: true, invincible: 0
+};
+
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth;
+  H = window.innerHeight;
+  canvas.width = Math.round(W * dpr);
+  canvas.height = Math.round(H * dpr);
+  canvas.style.width = W + "px";
+  canvas.style.height = H + "px";
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ground = H * 0.78;
+  if (!running) player.y = ground - player.h;
+}
+window.addEventListener("resize", resize);
+resize();
+
+function resetGame() {
+  score = 0;
+  health = 3;
+  distance = 0;
+  obstacles = [];
+  coins = [];
+  particles = [];
+  spawnTimer = 0.8;
+  coinTimer = 1;
+  shake = 0;
+  player.x = Math.min(100, W * .2);
+  player.y = ground - player.h;
+  player.vx = player.vy = 0;
+  player.onGround = true;
+  player.invincible = 0;
+  scoreEl.textContent = score;
+  healthEl.textContent = "♥ ♥ ♥";
+}
+
+function startGame() {
+  resetGame();
+  running = true;
+  paused = false;
+  gameOver = false;
+  overlay.style.display = "none";
+  pauseButton.textContent = "Ⅱ Pause";
+  lastTime = performance.now();
+}
+
+function endGame() {
+  running = false;
+  gameOver = true;
+  overlay.style.display = "flex";
+  titleEl.innerHTML = "GAME OVER";
+  subtitleEl.innerHTML =
+    `You collected <b style="color:#70efff">${score}</b> coins!<br>` +
+    `Distance survived: ${Math.floor(distance)} m<br>Can you beat your score?`;
+  mainButton.textContent = "↻ PLAY AGAIN";
+}
+
+function togglePause() {
+  if (!running && !paused) return;
+  paused = !paused;
+  if (paused) {
+    overlay.style.display = "flex";
+    titleEl.textContent = "PAUSED";
+    subtitleEl.textContent = "Take a breath, ninja. The shadows can wait.";
+    mainButton.textContent = "▶ RESUME";
+    pauseButton.textContent = "▶ Resume";
+  } else {
+    overlay.style.display = "none";
+    pauseButton.textContent = "Ⅱ Pause";
+    lastTime = performance.now();
+  }
+}
+
+mainButton.addEventListener("click", () => {
+  if (paused && !gameOver) {
+    paused = false;
+    overlay.style.display = "none";
+    pauseButton.textContent = "Ⅱ Pause";
+    lastTime = performance.now();
+  } else {
+    startGame();
+  }
+});
+pauseButton.addEventListener("click", togglePause);
+document.getElementById("restartButton").addEventListener("click", startGame);
+
+window.addEventListener("keydown", e => {
+  if (["ArrowLeft", "ArrowRight", "ArrowUp", "Space"].includes(e.code))
+    e.preventDefault();
+  keys[e.code] = true;
+  if (e.code === "Escape" || e.code === "KeyP") togglePause();
+  if (!running && !paused && e.code === "Enter") startGame();
+});
+window.addEventListener("keyup", e => keys[e.code] = false);
+window.addEventListener("blur", () => {
+  for (const k in keys) keys[k] = false;
+});
+
+function bindHold(id, key) {
+  const el = document.getElementById(id);
+  const down = e => {
+    e.preventDefault();
+    keys[key] = true;
+    try { el.setPointerCapture(e.pointerId); } catch (_) {}
+  };
+  const up = e => {
+    e.preventDefault();
+    keys[key] = false;
+  };
+  el.addEventListener("pointerdown", down);
+  el.addEventListener("pointerup", up);
+  el.addEventListener("pointercancel", up);
+  el.addEventListener("lostpointercapture", () => keys[key] = false);
+}
+bindHold("leftBtn", "ArrowLeft");
+bindHold("rightBtn", "ArrowRight");
+document.getElementById("jumpBtn").addEventListener("pointerdown", e => {
+  e.preventDefault();
+  jump();
+});
+
+function jump() {
+  if (!running || paused) return;
+  if (player.onGround) {
+    player.vy = -650;
+    player.onGround = false;
+    burst(player.x + player.w/2, ground - 5, "#7deaff", 7);
+  }
+}
+
+function burst(x, y, color, amount) {
+  for (let i = 0; i < amount; i++) {
+    particles.push({
+      x, y,
+      vx: (Math.random() - .5) * 200,
+      vy: (Math.random() - .8) * 180,
+      life: .3 + Math.random() * .45,
+      max: .75, color,
+      size: 2 + Math.random() * 4
+    });
+  }
+}
+
+function rects(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x &&
+         a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+function spawnObstacle() {
+  const tall = Math.random() < .55;
+  const h = tall ? 44 + Math.random() * 25 : 24;
+  obstacles.push({
+    x: W + 30, y: ground - h, w: tall ? 28 : 40, h,
+    type: tall ? "enemy" : "trap",
+    passed: false
+  });
+}
+
+function spawnCoins() {
+  const baseY = ground - 100 - Math.random() * 100;
+  for (let i = 0; i < 5; i++) {
+    coins.push({
+      x: W + 30 + i * 35,
+      y: baseY - Math.sin(i / 4 * Math.PI) * 30,
+      r: 9, taken: false
+    });
+  }
+}
+
+function update(dt) {
+  const move = (keys.ArrowRight || keys.KeyD ? 1 : 0) -
+               (keys.ArrowLeft || keys.KeyA ? 1 : 0);
+
+  player.vx = move * player.speed;
+  player.x += player.vx * dt;
+  player.x = Math.max(10, Math.min(W - player.w - 10, player.x));
+
+  if ((keys.Space || keys.ArrowUp || keys.KeyW) && player.onGround)
+    jump();
+
+  player.vy += 1550 * dt;
+  player.y += player.vy * dt;
+
+  if (player.y + player.h >= ground) {
+    player.y = ground - player.h;
+    player.vy = 0;
+    player.onGround = true;
+  }
+
+  player.invincible = Math.max(0, player.invincible - dt);
+  distance += 8 * dt;
+  const speed = Math.min(1.9, 1 + distance / 500);
+  const worldSpeed = 250 * speed;
+
+  spawnTimer -= dt;
+  if (spawnTimer <= 0) {
+    spawnObstacle();
+    spawnTimer = Math.max(.65, 1.45 / speed) + Math.random() * .5;
+  }
+
+  coinTimer -= dt;
+  if (coinTimer <= 0) {
+    spawnCoins();
+    coinTimer = 2.4 + Math.random() * 1.5;
+  }
+
+  for (const o of obstacles) {
+    o.x -= worldSpeed * dt;
+    if (!o.passed && rects(player, o) && player.invincible <= 0) {
+      o.passed = true;
+      health--;
+      player.invincible = 1.2;
+      shake = .2;
+      burst(player.x + 15, player.y + 20, "#ff5877", 14);
+      healthEl.textContent = "♥ ".repeat(health) || "0 ♥";
+      if (health <= 0) endGame();
+    }
+  }
+  obstacles = obstacles.filter(o => o.x + o.w > -20 && !o.passed);
+
+  for (const c of coins) {
+    c.x -= worldSpeed * dt;
+    if (!c.taken) {
+      const dx = player.x + player.w/2 - c.x;
+      const dy = player.y + player.h/2 - c.y;
+      if (Math.hypot(dx, dy) < 28) {
+        c.taken = true;
+        score += 10;
+        scoreEl.textContent = score;
+        burst(c.x, c.y, "#ffd95c", 7);
+      }
+    }
+  }
+  coins = coins.filter(c => c.x > -30 && !c.taken);
+
+  for (const p of particles) {
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vy += 350 * dt;
+    p.life -= dt;
+  }
+  particles = particles.filter(p => p.life > 0);
+  shake = Math.max(0, shake - dt);
+}
+
+function drawBackground(time) {
+  const sky = ctx.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0, "#080f25");
+  sky.addColorStop(.65, "#1b2b49");
+  sky.addColorStop(1, "#34445b");
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, H);
+
+  // Moon
+  ctx.beginPath();
+  ctx.arc(W * .78, H * .2, Math.min(W, H) * .065, 0, Math.PI * 2);
+  ctx.fillStyle = "#d9f4ff";
+  ctx.shadowColor = "#69dfff";
+  ctx.shadowBlur = 35;
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Stars
+  for (let i = 0; i < 65; i++) {
+    const x = (i * 173.7) % W;
+    const y = (i * 83.1) % (ground * .72);
+    ctx.globalAlpha = .3 + .5 * Math.abs(Math.sin(time * .001 + i));
+    ctx.fillStyle = "#d8efff";
+    ctx.fillRect(x, y, 2, 2);
+  }
+  ctx.globalAlpha = 1;
+
+  // Distant mountain silhouettes
+  for (let layer = 0; layer < 2; layer++) {
+    ctx.fillStyle = layer ? "#111e36" : "#172743";
+    ctx.beginPath();
+    ctx.moveTo(0, ground);
+    const step = 100;
+    for (let x = 0; x <= W + step; x += step) {
+      const y = ground - 70 - ((Math.sin(x * .018 + layer * 2) + 1) * 55)
+                - layer * 25;
+      ctx.lineTo(x, y);
+    }
+    ctx.lineTo(W, ground);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Ground
+  ctx.fillStyle = "#101827";
+  ctx.fillRect(0, ground, W, H - ground);
+  ctx.fillStyle = "#3b7d91";
+  ctx.fillRect(0, ground, W, 3);
+
+  ctx.strokeStyle = "#29445c";
+  ctx.lineWidth = 1;
+  for (let x = -((distance * 20) % 60); x < W; x += 60) {
+    ctx.beginPath();
+    ctx.moveTo(x, ground + 22);
+    ctx.lineTo(x - 25, H);
+    ctx.stroke();
+  }
+}
+
+function drawNinja(time) {
+  const x = player.x, y = player.y;
+  if (player.invincible > 0 && Math.floor(time / 90) % 2) return;
+
+  ctx.save();
+  ctx.translate(x + player.w/2, y + player.h/2);
+  const runningAnim = player.onGround ? Math.sin(time * .018) * 5 : -7;
+
+  // Scarf
+  ctx.fillStyle = "#ff4d68";
+  ctx.beginPath();
+  ctx.moveTo(-8, -8);
+  ctx.lineTo(-29 - Math.sin(time * .02) * 5, -2);
+  ctx.lineTo(-21, 4);
+  ctx.lineTo(-9, -2);
+  ctx.fill();
+
+  // Legs
+  ctx.strokeStyle = "#090e1b";
+  ctx.lineWidth = 8;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(-5, 12);
+  ctx.lineTo(-9 + runningAnim, 21);
+  ctx.lineTo(-14 + runningAnim, 22);
+  ctx.moveTo(5, 12);
+  ctx.lineTo(9 - runningAnim, 21);
+  ctx.lineTo(15 - runningAnim, 22);
+  ctx.stroke();
+
+  // Body
+  ctx.fillStyle = "#080d18";
+  ctx.beginPath();
+  ctx.roundRect(-12, -9, 24, 27, 7);
+  ctx.fill();
+  ctx.strokeStyle = "#42627c";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Head
+  ctx.fillStyle = "#101827";
+  ctx.beginPath();
+  ctx.arc(0, -15, 13, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Mask and glowing eyes
+  ctx.fillStyle = "#d8f8ff";
+  ctx.fillRect(-8, -18, 16, 4);
+  ctx.fillStyle = "#00cfff";
+  ctx.fillRect(-6, -17, 4, 2);
+  ctx.fillRect(2, -17, 4, 2);
+
+  ctx.restore();
+}
+
+function drawObstacle(o) {
+  if (o.type === "enemy") {
+    ctx.fillStyle = "#70263e";
+    ctx.beginPath();
+    ctx.roundRect(o.x, o.y, o.w, o.h, 8);
+    ctx.fill();
+    ctx.fillStyle = "#ff4f76";
+    ctx.fillRect(o.x + 5, o.y + 12, o.w - 10, 4);
+    ctx.fillStyle = "#fff0f4";
+    ctx.fillRect(o.x + 6, o.y + 13, 4, 2);
+    ctx.fillRect(o.x + o.w - 10, o.y + 13, 4, 2);
+    ctx.fillStyle = "#a73d57";
+    ctx.fillRect(o.x + 3, o.y + o.h - 7, o.w - 6, 7);
+  } else {
+    ctx.fillStyle = "#e5a14b";
+    ctx.beginPath();
+    ctx.moveTo(o.x, ground);
+    ctx.lineTo(o.x + o.w/2, o.y);
+    ctx.lineTo(o.x + o.w, ground);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "#fff0b0";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+}
+
+function draw(time) {
+  ctx.save();
+  if (shake > 0) {
+    ctx.translate((Math.random() - .5) * 10, (Math.random() - .5) * 7);
+  }
+  drawBackground(time);
+
+  for (const c of coins) {
+    ctx.beginPath();
+    ctx.arc(c.x, c.y, c.r, 0, Math.PI * 2);
+    ctx.fillStyle = "#ffd85a";
+    ctx.shadowColor = "#ffbd38";
+    ctx.shadowBlur = 15;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = "#fff3b2";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  obstacles.forEach(drawObstacle);
+  drawNinja(time);
+
+  for (const p of particles) {
+    ctx.globalAlpha = Math.max(0, p.life / p.max);
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x, p.y, p.size, p.size);
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+function loop(time) {
+  const dt = Math.min((time - lastTime) / 1000 || 0, .033);
+  lastTime = time;
+  if (running && !paused) update(dt);
+  draw(time);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+// Double tap/click the jump area to jump; prevent browser scrolling.
+canvas.addEventListener("pointerdown", e => {
+  if (e.clientY > H * .35) jump();
+});
+</script>
+</body>
+</html>
